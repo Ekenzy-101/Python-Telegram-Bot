@@ -8,9 +8,11 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "Kenzy Mail AI"
-    app_version: str = "1.0.0"
-    app_debug: bool = False
+    app_debug: bool = True
     app_origins: str = "*"
+    app_version: str = "1.0.0"
+
+    google_application_credentials: str = ""
 
     log_level: str = "INFO"
 
@@ -25,7 +27,8 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str
-    telegram_webhook_url: str
+    telegram_webhook_secret: str
+    telegram_webhook_url: str = ""
 
 
 settings = Settings()

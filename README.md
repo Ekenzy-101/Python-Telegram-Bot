@@ -1,11 +1,13 @@
 # 🤖 Kenzy Mail AI
 
+![Kenzy Mail AI](./logo.png)
+
 > Your Personal AI Email Agent for Gmail - Powered by Claude AI & Telegram
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Gmail API](https://img.shields.io/badge/Gmail-API-red.svg)](https://developers.google.com/gmail/api)
-[![Anthropic Claude](https://img.shields.io/badge/Anthropic-Claude-purple.svg)](https://www.anthropic.com/)
+[![Anthropic Claude](https://img.shields.io/badge/Open-AI-purple.svg)](https://openai.com)
 
 Kenzy Mail AI is an intelligent Telegram bot that transforms how you manage your Gmail inbox. Using advanced AI from Anthropic's Claude, it automatically organizes emails, suggests smart replies, and handles routine email tasks - all through a simple chat interface.
 
@@ -76,7 +78,7 @@ Kenzy: 📬 Inbox Summary
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - Gmail account
 - Telegram account
 - Google Cloud Platform account (free tier)
@@ -94,6 +96,8 @@ Kenzy: 📬 Inbox Summary
 2. **Install dependencies**
 
    ```bash
+   python -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
 
@@ -125,6 +129,7 @@ Create a `.env` file in the project root:
 ```env
 # Telegram (get from @BotFather)
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_WEBHOOK_SECRET=secret
 TELEGRAM_WEBHOOK_URL=https://domain.com/webhook
 
 # Anthropic API Key (get from console.anthropic.com)
@@ -176,13 +181,13 @@ Detailed instructions: [docs/GOOGLE_CLOUD_SETUP.md](docs/GOOGLE_CLOUD_SETUP.md)
 
 ### Basic Commands
 
+- `/audit_log` - View your logs
+- `/check_inbox` - Check your inbox for new emails
+- `/connect_gmail` - Connect your gmail account
+- `/manage_templates` - Manage your email templates
+- `/manage_rules` - Configure your automation rules
 - `/start` - Initialize the bot and show main menu
-- `/inbox` - Check your inbox for new emails
-- `/templates` - Manage email templates
-- `/rules` - Configure automation rules
-- `/settings` - Adjust bot preferences
-- `/help` - Show help information
-- `/stats` - View usage statistics
+- `/settings` - Adjust your preferences
 
 ### Creating Email Templates
 
@@ -245,23 +250,32 @@ Detailed instructions: [docs/GOOGLE_CLOUD_SETUP.md](docs/GOOGLE_CLOUD_SETUP.md)
 ```
 
 kenzy-mail-ai/
-├── app
-│   ├── app.py
-│   ├── bot.py
-│   ├── config.py
-│   ├── __init__.py
-│   ├── __pycache__
-│   ├── services
-│   │   ├── ai.py
-│   │   ├── email.py
-│   │   ├── __init__.py
-│   │   ├── __pycache__
-│   │   └── session.py
-│   └── test.py
-├── icon.png
-├── logo.png
-├── README.md
-└── requirements.txt
+├── bot.py                      # Main bot application
+├── gmail_client.py             # Gmail API wrapper
+├── ai_assistant.py             # Claude AI integration
+├── test_gmail_auth.py          # Authentication test script
+├── requirements.txt            # Python dependencies
+├── .env.example               # Environment template
+├── credentials.json           # Google OAuth credentials (gitignored)
+├── token.json                 # User auth token (gitignored)
+│
+├── docs/
+│   ├── AUTHENTICATION.md      # Setup guide
+│   ├── API_REFERENCE.md       # Code documentation
+│   └── TROUBLESHOOTING.md     # Common issues
+│
+├── templates/
+│   └── email_templates.json   # Sample templates
+│
+├── tests/
+│   ├── test_gmail.py          # Gmail client tests
+│   ├── test_ai.py             # AI assistant tests
+│   └── test_bot.py            # Bot functionality tests
+│
+└── utils/
+    ├── logger.py              # Logging configuration
+    ├── rate_limiter.py        # Rate limiting
+    └── validators.py          # Input validation
 ```
 
 ---
@@ -297,6 +311,56 @@ Kenzy Mail AI requests the following Gmail permissions:
 5. Set up whitelist for auto-reply to prevent spam
 
 ---
+
+## 🧪 Testing
+
+### Run Authentication Test
+
+```bash
+python test_gmail_auth.py
+```
+
+### Run Unit Tests
+
+```bash
+pytest tests/
+```
+
+### Test Gmail Operations
+
+```bash
+python gmail_client.py
+```
+
+### Test AI Assistant
+
+```bash
+python -m tests.test_ai
+```
+
+---
+
+## 🛠️ Development
+
+### Setup Development Environment
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Run linting
+flake8 .
+
+# Format code
+black .
+
+# Type checking
+mypy bot.py
+```
 
 ### Contributing
 
@@ -341,6 +405,57 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 
 ---
 
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Issue:** `credentials.json not found`
+
+```
+Solution: Download OAuth credentials from Google Cloud Console
+See docs/AUTHENTICATION.md for detailed steps
+```
+
+**Issue:** `invalid_grant` error
+
+```
+Solution:
+1. Delete token.json
+2. Run python test_gmail_auth.py
+3. Re-authorize the application
+```
+
+**Issue:** Bot doesn't respond in Telegram
+
+```
+Solution:
+1. Check if bot is running: python bot.py
+2. Verify TELEGRAM_BOT_TOKEN in .env
+3. Check bot logs for errors
+```
+
+**Issue:** AI responses are generic
+
+```
+Solution:
+1. Check ANTHROPIC_API_KEY is valid
+2. Improve your email templates
+3. Add more context in template variables
+```
+
+For more help, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) or [open an issue](https://github.com/yourusername/kenzy-mail-ai/issues).
+
+---
+
+## 📚 Resources
+
+- [Gmail API Documentation](https://developers.google.com/gmail/api)
+- [Anthropic Claude API](https://docs.anthropic.com/)
+- [python-telegram-bot Documentation](https://python-telegram-bot.org/)
+- [OAuth 2.0 Guide](https://developers.google.com/identity/protocols/oauth2)
+
+---
+
 ## 📜 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -363,6 +478,24 @@ copies or substantial portions of the Software.
 
 ---
 
+## 🙏 Acknowledgments
+
+- **Anthropic** - For providing Claude AI API
+- **Google** - For Gmail API and authentication services
+- **python-telegram-bot** - For the excellent Telegram bot framework
+- **Community Contributors** - Thank you to all who have contributed!
+
+---
+
+## 💬 Support
+
+- 📧 Email: support@kenzy-mail.ai
+- 💬 Telegram: [@kenzy_support](https://t.me/kenzy_support)
+- 🐛 Issues: [GitHub Issues](https://github.com/yourusername/kenzy-mail-ai/issues)
+- 💡 Discussions: [GitHub Discussions](https://github.com/yourusername/kenzy-mail-ai/discussions)
+
+---
+
 ## ⭐ Show Your Support
 
 If Kenzy Mail AI helps you manage your emails better, please consider:
@@ -370,5 +503,14 @@ If Kenzy Mail AI helps you manage your emails better, please consider:
 - ⭐ Starring the repository
 - 🐦 Sharing on Twitter
 - 🤝 Contributing to the project
+- 💰 [Sponsoring development](https://github.com/sponsors/yourusername)
 
 ---
+
+<div align="center">
+
+**Built with ❤️ by developers who hate email overload**
+
+[Website](https://kenzy-mail.ai) • [Documentation](https://docs.kenzy-mail.ai) • [Blog](https://blog.kenzy-mail.ai)
+
+</div>

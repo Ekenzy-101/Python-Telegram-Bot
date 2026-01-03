@@ -7,7 +7,6 @@ import logging
 import re
 from app.config import settings
 from app.services import AIService, EmailService, SessionService
-from typing import Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.warnings import PTBUserWarning
 from telegram.ext import (
@@ -44,18 +43,13 @@ filterwarnings(
     AWAITING_BLACKLIST_EMAIL,
 ) = range(7)
 
-# User data structure
-user_sessions: Dict[int, SessionService] = {}
-ai_service = AIService()
+
+ai = AIService()
 
 
 # Bot command handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start command handler"""
-    user_id = update.effective_user.id
-    if user_id not in user_sessions:
-        user_sessions[user_id] = SessionService(user_id)
-
     text = (
         "🤖 *Personal AI Email Agent*\n\n"
         "I help you manage Gmail with AI-powered automation!\n\n"
@@ -70,6 +64,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📧 Connect Gmail", callback_data="connect_gmail")],
         [InlineKeyboardButton("📬 Check Inbox", callback_data="check_inbox")],
         [InlineKeyboardButton("📝 Manage Templates", callback_data="manage_templates")],
+        [InlineKeyboardButton("📝 Manage Rules", callback_data="manage_rules")],
+        [InlineKeyboardButton("✅ Whitelist", callback_data="manage_whitelist")],
+        [InlineKeyboardButton("🚫 Blacklist", callback_data="manage_blacklist")],
+        [InlineKeyboardButton("🔄 Toggle Auto-Reply", callback_data="toggle_auto")],
         [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
         [InlineKeyboardButton("📊 Audit Log", callback_data="audit_log")],
     ]
@@ -89,12 +87,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = update.effective_user.id
-    session = user_sessions.get(user_id)
-    if not session:
-        await query.edit_message_text("Please /start the bot first")
-        return
-
+    session = SessionService(update.effective_user.id)
     session.log_action(query.data, {})
 
     if query.data == "connect_gmail":
@@ -112,7 +105,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "audit_log":
         await show_audit_log(update, context)
 
-    elif query.data == "main_menu":
+    elif query.data == "start":
         await start(update, context)
 
     elif query.data == "toggle_auto":
@@ -137,36 +130,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await manage_blacklist(update, context)
 
     elif query.data.startswith("reply_"):
-        # Handle reply actions: reply_approve_<message_id>, reply_deny_<message_id>
-        parts = query.data.split("_")
-        if len(parts) >= 3:
-            action = parts[1]
-            message_id = "_".join(parts[2:])
-            await handle_reply_action(update, context, action, message_id)
+        await handle_reply_action(update, context)
 
     elif query.data.startswith("template_"):
-        # Handle template actions: template_delete_<name>, template_use_<name>
-        parts = query.data.split("_", 2)
-        if len(parts) >= 3:
-            action = parts[1]
-            template_name = parts[2]
-            await handle_template_action(update, context, action, template_name)
+        await handle_template_action(update, context)
 
     elif query.data.startswith("rule_"):
-        # Handle rule actions: rule_delete_<index>
-        parts = query.data.split("_", 2)
-        if len(parts) >= 3:
-            action = parts[1]
-            rule_index = int(parts[2])
-            await handle_rule_action(update, context, action, rule_index)
+        await handle_rule_action(update, context)
 
     elif query.data.startswith("email_"):
-        # Handle email actions: email_archive_<id>, email_label_<id>
-        parts = query.data.split("_", 2)
-        if len(parts) >= 3:
-            action = parts[1]
-            email_id = parts[2]
-            await handle_email_action(update, context, action, email_id)
+        await handle_email_action(update, context)
 
     elif query.data.startswith("add_whitelist"):
         await start_add_whitelist(update, context)
@@ -175,12 +148,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_add_blacklist(update, context)
 
     elif query.data.startswith("remove_whitelist_"):
-        email = query.data.replace("remove_whitelist_", "")
-        await remove_whitelist(update, context, email)
+        await remove_whitelist(update, context)
 
     elif query.data.startswith("remove_blacklist_"):
-        email = query.data.replace("remove_blacklist_", "")
-        await remove_blacklist(update, context, email)
+        await remove_blacklist(update, context)
 
 
 async def connect_gmail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -196,7 +167,7 @@ async def connect_gmail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "Please authenticate with Google to use this bot"
     keyboard = [
         [InlineKeyboardButton("📧 Connect Gmail Account", url=url)],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="start")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -207,12 +178,11 @@ async def connect_gmail(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Check inbox and display messages with AI analysis"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email_service = EmailService(user_id)
+    session = SessionService(update.effective_user.id)
+    gmail = EmailService(update.effective_user.id)
 
     # Check if user is authenticated
-    if not email_service.creds:
+    if not gmail.creds:
         await query.edit_message_text(
             "❌ Please connect your Gmail account first.",
             parse_mode="Markdown",
@@ -229,13 +199,12 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    messages = email_service.get_inbox_messages(max_results=10)
-
+    messages = gmail.get_inbox_messages(max_results=10)
     if not messages:
         text = "📬 *Inbox Summary*\n\nNo new messages found."
         keyboard = [
             [InlineKeyboardButton("🔄 Refresh", callback_data="check_inbox")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="start")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
@@ -246,17 +215,16 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📬 *Inbox Summary*\n\n"
     urgent_count = 0
     actionable_items = []
-
     for i, msg in enumerate(messages[:5], 1):  # Show top 5
         # Check whitelist/blacklist
-        sender_email = _extract_email(msg["from"])
+        sender_email = gmail.extract_email(msg["from"])
         if sender_email in session.settings["blacklist"]:
             continue
         if sender_email in session.settings["whitelist"]:
             msg["priority"] = "high"
 
         # AI analysis
-        analysis = ai_service.analyze_email(msg)
+        analysis = ai.analyze_email(msg)
         category = analysis.get("category", "general")
         sentiment = analysis.get("sentiment", "neutral")
         topics = analysis.get("key_topics", "")
@@ -278,6 +246,7 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{emoji} *{i}. {msg['subject'][:50]}*\n"
         text += f"   From: {msg['from'][:40]}\n"
         text += f"   Category: {category.upper()}\n"
+        text += f"   Sentiment: {sentiment.upper()}\n"
         if topics:
             text += f"   Topics: {topics[:30]}\n"
         text += f"   Preview: {msg['snippet'][:60]}...\n\n"
@@ -308,7 +277,7 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.extend(
         [
             [InlineKeyboardButton("🔄 Refresh", callback_data="check_inbox")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="start")],
         ]
     )
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -318,11 +287,9 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if session.rules:
         for msg in messages:
             # Only process rules if not blacklisted
-            sender_email = _extract_email(msg["from"])
+            sender_email = gmail.extract_email(msg["from"])
             if sender_email not in session.settings["blacklist"]:
-                applied_actions = session.process_rules(
-                    msg, ai_service, session.templates
-                )
+                applied_actions = session.process_rules(msg, session.templates)
                 if applied_actions:
                     logger.info(
                         f"Applied {len(applied_actions)} rules to message {msg['id']}"
@@ -340,23 +307,13 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_templates(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show email templates"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
-    text = "📝 *Email Templates*\n\n"
-    if session.templates:
-        for name, template in session.templates.items():
-            text += f"• *{name}*\n"
-            text += f"  {template['content'][:50]}...\n"
-            text += f"  Tone: {template.get('tone', 'professional')}\n\n"
-    else:
-        text += "No templates yet. Create one below."
-
+    session = SessionService(update.effective_user.id)
     keyboard = [
         [InlineKeyboardButton("➕ Add Template", callback_data="add_template")],
     ]
+    text = "📝 *Email Templates*\n\n"
     if session.templates:
-        for name in session.templates.keys():
+        for name, template in session.templates.items():
             keyboard.append(
                 [
                     InlineKeyboardButton(
@@ -365,7 +322,13 @@ async def show_templates(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 ]
             )
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+            text += f"• *{name}*\n"
+            text += f"  {template['content'][:50]}...\n"
+            text += f"  Tone: {template.get('tone', 'professional')}\n\n"
+    else:
+        text += "No templates yet. Create one below."
+
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="start")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
@@ -375,8 +338,7 @@ async def show_templates(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show settings"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    session = SessionService(update.effective_user.id)
 
     auto_status = "✅ ON" if session.settings["auto_reply"] else "❌ OFF"
     text = f"""⚙️ *Settings*
@@ -394,7 +356,7 @@ Rules: {len(session.rules)} active"""
             InlineKeyboardButton("✅ Whitelist", callback_data="manage_whitelist"),
             InlineKeyboardButton("🚫 Blacklist", callback_data="manage_blacklist"),
         ],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="start")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -405,13 +367,12 @@ Rules: {len(session.rules)} active"""
 async def show_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show audit log"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    session = SessionService(update.effective_user.id)
 
     text = "📊 *Audit Log*\n\n"
-    if session.audit_log:
-        for entry in session.audit_log[-10:]:
-            timestamp = entry.get("timestamp", "")[:16]  # Format timestamp
+    if session.logs:
+        for entry in session.logs[-10:]:
+            timestamp = entry.get("timestamp", "")
             action = entry.get("action", "")
             details = entry.get("details", {})
 
@@ -424,26 +385,18 @@ async def show_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text += "No actions logged yet"
 
-    keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]]
+    keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data="start")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
     )
 
 
-def _extract_email(email_string: str) -> str:
-    """Extract email address from 'Name <email@domain.com>' format"""
-    match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", email_string)
-    return match.group(0) if match else email_string.lower()
-
-
 async def toggle_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle auto-reply setting"""
-    query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
+    session = SessionService(update.effective_user.id)
     session.settings["auto_reply"] = not session.settings["auto_reply"]
+    session.save_settings()
     session.log_action(
         "toggle_auto_reply",
         {"auto_reply": session.settings["auto_reply"]},
@@ -455,23 +408,17 @@ async def toggle_auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def manage_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show and manage automation rules"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    session = SessionService(update.effective_user.id)
 
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Rule", callback_data="add_rule")],
+    ]
     text = "📋 *Automation Rules*\n\n"
     if session.rules:
         for i, rule in enumerate(session.rules):
             text += f"*{i+1}. {rule['type']}*\n"
             text += f"   Condition: {rule['condition']}\n"
             text += f"   Action: {rule['action']}\n\n"
-    else:
-        text += "No rules configured yet.\n"
-
-    keyboard = [
-        [InlineKeyboardButton("➕ Add Rule", callback_data="add_rule")],
-    ]
-    if session.rules:
-        for i, rule in enumerate(session.rules):
             keyboard.append(
                 [
                     InlineKeyboardButton(
@@ -479,7 +426,10 @@ async def manage_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 ]
             )
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+    else:
+        text += "No rules configured yet.\n"
+
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="start")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
@@ -505,7 +455,7 @@ async def start_add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Auto Reply", callback_data="rule_type_reply"),
         ],
         [InlineKeyboardButton("Auto Archive", callback_data="rule_type_archive")],
-        [InlineKeyboardButton("Cancel", callback_data="main_menu")],
+        [InlineKeyboardButton("Cancel", callback_data="start")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
@@ -519,13 +469,10 @@ async def start_add_rule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def view_reply_suggestions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show reply suggestions for actionable emails"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email_service = EmailService(user_id)
+    gmail = EmailService(update.effective_user.id)
+    session = SessionService(update.effective_user.id)
 
     actionable_items = context.user_data.get("actionable_items", [])
-    messages = context.user_data.get("messages", [])
-
     if not actionable_items:
         await query.edit_message_text(
             "No actionable items found.", parse_mode="Markdown"
@@ -534,8 +481,8 @@ async def view_reply_suggestions(update: Update, context: ContextTypes.DEFAULT_T
 
     # Show first actionable item with reply suggestion
     item = actionable_items[0]
+    messages = context.user_data.get("messages", [])
     message = next((m for m in messages if m["id"] == item["id"]), None)
-
     if not message:
         await query.edit_message_text("Message not found.", parse_mode="Markdown")
         return
@@ -545,10 +492,10 @@ async def view_reply_suggestions(update: Update, context: ContextTypes.DEFAULT_T
         # Use first template or best matching template
         template_name = list(session.templates.keys())[0]
         template = session.templates[template_name]
-        reply_text = ai_service.generate_reply(message, template)
+        reply_text = ai.generate_reply(message, template)
     else:
         # Generate without template
-        reply_text = ai_service.generate_reply(
+        reply_text = ai.generate_reply(
             message,
             {"content": "Thank you for your email. I will get back to you soon."},
         )
@@ -567,7 +514,7 @@ async def view_reply_suggestions(update: Update, context: ContextTypes.DEFAULT_T
                 "❌ Deny", callback_data=f"reply_deny_{message['id']}"
             ),
         ],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="start")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -580,45 +527,44 @@ async def view_reply_suggestions(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 
-async def handle_reply_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, message_id: str
-):
-    """Handle reply approval/denial"""
+async def handle_reply_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle reply actions: reply_approve_<message_id>, reply_deny_<message_id>"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email_service = EmailService(user_id)
+    parts = query.data.split("_")
+    if len(parts) < 3:
+        return await query.answer("❌ Invalid action", show_alert=True)
 
+    gmail = EmailService(update.effective_user.id)
+    session = SessionService(update.effective_user.id)
+
+    message_id = "_".join(parts[2:])
     message = context.user_data.get(f"message_{message_id}")
     reply_text = context.user_data.get(f"reply_{message_id}")
-
     if not message or not reply_text:
         await query.answer("Error: Message data not found", show_alert=True)
         return
 
+    action = parts[1]
     if action == "approve":
         # Check rate limit
         if not session.check_rate_limit(max_actions=5, window_seconds=60):
             await query.answer("⏸️ Rate limit exceeded. Please wait.", show_alert=True)
             return
 
-        # Extract sender email
-        sender_email = _extract_email(message["from"])
-
-        # Check blacklist
+        # Extract sender email and check blacklist
+        sender_email = gmail.extract_email(message["from"])
         if sender_email in session.settings["blacklist"]:
             await query.answer("❌ Sender is blacklisted", show_alert=True)
             return
 
         # Send reply
-        success = email_service.send_reply(
+        success = gmail.send_reply(
             message_id,
             message["threadId"],
             reply_text,
             sender_email,
             f"Re: {message['subject']}",
         )
-
         if success:
             session.log_action(
                 "reply_sent",
@@ -635,7 +581,7 @@ async def handle_reply_action(
             )
         else:
             await query.answer("❌ Failed to send reply", show_alert=True)
-    else:  # deny
+    else:
         session.log_action(
             "reply_denied",
             {"message_id": message_id, "subject": message["subject"]},
@@ -644,17 +590,18 @@ async def handle_reply_action(
         await query.edit_message_text("Reply suggestion denied.", parse_mode="Markdown")
 
 
-async def handle_template_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, template_name: str
-):
-    """Handle template actions (delete, use)"""
+async def handle_template_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle template actions: template_delete_<name>, template_use_<name>"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
+        return await query.answer("❌ Invalid action", show_alert=True)
 
+    action = parts[1]
+    template_name = parts[2]
+    session = SessionService(update.effective_user.id)
     if action == "delete":
-        if template_name in session.templates:
-            del session.templates[template_name]
+        if session.delete_template(template_name):
             session.log_action("template_deleted", {"name": template_name})
             await query.answer("Template deleted", show_alert=False)
             await show_templates(update, context)
@@ -662,14 +609,16 @@ async def handle_template_action(
             await query.answer("Template not found", show_alert=True)
 
 
-async def handle_rule_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, rule_index: int
-):
-    """Handle rule actions (delete)"""
+async def handle_rule_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle rule actions: rule_delete_<index>"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
+        return await query.answer("❌ Invalid action", show_alert=True)
 
+    action = parts[1]
+    rule_index = int(parts[2])
+    session = SessionService(update.effective_user.id)
     if action == "delete":
         if 0 <= rule_index < len(session.rules):
             rule = session.rules.pop(rule_index)
@@ -680,17 +629,19 @@ async def handle_rule_action(
             await query.answer("Rule not found", show_alert=True)
 
 
-async def handle_email_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, email_id: str
-):
-    """Handle email actions (archive, label)"""
+async def handle_email_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle email actions: email_archive_<id>, email_label_<id>"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email_service = EmailService(user_id)
+    parts = query.data.split("_", 2)
+    if len(parts) < 3:
+        return await query.answer("❌ Invalid action", show_alert=True)
 
+    action = parts[1]
+    email_id = parts[2]
+    gmail = EmailService(update.effective_user.id)
+    session = SessionService(update.effective_user.id)
     if action == "archive":
-        success = email_service.archive_message(email_id)
+        success = gmail.archive_message(email_id)
         if success:
             session.log_action("email_archived", {"message_id": email_id})
             await query.answer("✅ Email archived", show_alert=False)
@@ -704,8 +655,7 @@ async def handle_email_action(
 async def manage_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manage whitelist"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
+    session = SessionService(update.effective_user.id)
 
     text = "✅ *Whitelist*\n\n"
     if session.settings["whitelist"]:
@@ -727,7 +677,7 @@ async def manage_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 ]
             )
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="start")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
@@ -737,19 +687,12 @@ async def manage_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def manage_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manage blacklist"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
-    text = "🚫 *Blacklist*\n\n"
-    if session.settings["blacklist"]:
-        for email in session.settings["blacklist"]:
-            text += f"• {email}\n"
-    else:
-        text += "No blacklisted senders.\n"
+    session = SessionService(update.effective_user.id)
 
     keyboard = [
         [InlineKeyboardButton("➕ Add Email", callback_data="add_blacklist")],
     ]
+    text = "🚫 *Blacklist*\n\n"
     if session.settings["blacklist"]:
         for email in session.settings["blacklist"]:
             keyboard.append(
@@ -760,7 +703,11 @@ async def manage_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
                 ]
             )
-    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")])
+            text += f"• {email}\n"
+    else:
+        text += "No blacklisted senders.\n"
+
+    keyboard.append([InlineKeyboardButton("🏠 Main Menu", callback_data="start")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
@@ -801,11 +748,10 @@ async def receive_template_name(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def receive_template_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive template content"""
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
     template_name = context.user_data.get("template_name")
     template_content = update.message.text
 
+    session = SessionService(update.effective_user.id)
     session.add_template(template_name, template_content)
     session.log_action("template_added", {"name": template_name})
 
@@ -852,13 +798,11 @@ async def receive_rule_condition(update: Update, context: ContextTypes.DEFAULT_T
 
 async def receive_rule_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive rule action"""
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
     action = update.message.text
     rule_type = context.user_data.get("rule_type", "label")
     condition = context.user_data.get("rule_condition", "")
 
+    session = SessionService(update.effective_user.id)
     session.add_rule(rule_type, condition, action)
     session.log_action(
         "rule_added", {"type": rule_type, "condition": condition, "action": action}
@@ -873,12 +817,12 @@ async def receive_rule_action(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def receive_whitelist_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive whitelist email"""
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email = _extract_email(update.message.text)
-
+    gmail = EmailService(update.effective_user.id)
+    session = SessionService(update.effective_user.id)
+    email = gmail.extract_email(update.message.text)
     if email not in session.settings["whitelist"]:
         session.settings["whitelist"].append(email)
+        session.save_settings()
         session.log_action("whitelist_added", {"email": email})
         await update.message.reply_text(
             f"✅ {email} added to whitelist!",
@@ -894,12 +838,12 @@ async def receive_whitelist_email(update: Update, context: ContextTypes.DEFAULT_
 
 async def receive_blacklist_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Receive blacklist email"""
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-    email = _extract_email(update.message.text)
-
+    gmail = EmailService(update.effective_user.id)
+    session = SessionService(update.effective_user.id)
+    email = gmail.extract_email(update.message.text)
     if email not in session.settings["blacklist"]:
         session.settings["blacklist"].append(email)
+        session.save_settings()
         session.log_action("blacklist_added", {"email": email})
         await update.message.reply_text(
             f"✅ {email} added to blacklist!",
@@ -913,31 +857,27 @@ async def receive_blacklist_email(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 
-async def remove_whitelist(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, email: str
-):
+async def remove_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove email from whitelist"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
+    email = query.data.replace("remove_whitelist_", "")
+    session = SessionService(update.effective_user.id)
     if email in session.settings["whitelist"]:
         session.settings["whitelist"].remove(email)
+        session.save_settings()
         session.log_action("whitelist_removed", {"email": email})
         await query.answer("Removed from whitelist", show_alert=False)
     await manage_whitelist(update, context)
 
 
-async def remove_blacklist(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, email: str
-):
+async def remove_blacklist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove email from blacklist"""
     query = update.callback_query
-    user_id = update.effective_user.id
-    session = user_sessions[user_id]
-
+    email = query.data.replace("remove_whitelist_", "")
+    session = SessionService(update.effective_user.id)
     if email in session.settings["blacklist"]:
         session.settings["blacklist"].remove(email)
+        session.save_settings()
         session.log_action("blacklist_removed", {"email": email})
         await query.answer("Removed from blacklist", show_alert=False)
     await manage_blacklist(update, context)
@@ -953,7 +893,6 @@ def new():
     """Main function to run the bot"""
     app = (
         Application.builder()
-        .updater(None)
         .token(settings.telegram_bot_token)
         .read_timeout(10)
         .get_updates_read_timeout(45)

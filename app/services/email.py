@@ -1,8 +1,8 @@
 import base64
+from datetime import datetime
 import logging
-import json
-import redis
-from app.config import settings
+import re
+from app.services.cache import CacheService
 from email.mime.text import MIMEText
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -23,8 +23,8 @@ class EmailService:
 
     def __init__(self, user_id: int):
         self.user_id = user_id
+        self.cache = CacheService(user_id)
         self.creds = self._read_user_creds()
-        self.redis = redis.Redis.from_url(settings.redis_url)
         if self.creds:
             self.service = build("gmail", "v1", credentials=self.creds)
         else:
@@ -52,7 +52,7 @@ class EmailService:
             flow.fetch_token(code=code)
             self.creds = flow.credentials
             self.service = build("gmail", "v1", credentials=self.creds)
-            self._save_user_creds()
+            self.cache.save("creds", self.creds.to_json())
             return True
         except Exception as e:
             logger.error(f"Failed to end authentication: {e}")
@@ -92,16 +92,18 @@ class EmailService:
             return []
 
     def _create_auth_flow(self) -> Flow:
-        data = self.redis.get("client_secret")
-        client_config = json.loads(data)
+        client_config = self.cache.read_config()
         flow = Flow.from_client_config(client_config, SCOPES)
         flow.redirect_uri = client_config["web"]["redirect_uris"][0]
         return flow
 
     def _read_user_creds(self) -> Optional[Credentials]:
         try:
-            data = self.redis.get(str(self.user_id))
-            creds = Credentials.from_authorized_user_info(json.loads(data), SCOPES)
+            data = self.cache.read("creds", None)
+            if not data:
+                return None
+
+            creds = Credentials.from_authorized_user_info(data, SCOPES)
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
 
@@ -109,13 +111,6 @@ class EmailService:
         except Exception as error:
             logger.error(f"Failed to read user credentials: {error}")
             return None
-
-    def _save_user_creds(self) -> bool:
-        try:
-            return self.redis.set(str(self.user_id), self.creds.to_json())
-        except Exception as error:
-            logger.error(f"Failed to save user credentials: {error}")
-            return False
 
     def _parse_message(self, msg: dict) -> dict:
         """Parse message details"""
@@ -260,3 +255,8 @@ class EmailService:
         except HttpError as error:
             logger.error(f"Error marking as read: {error}")
             return False
+
+    def extract_email(self, email_string: str) -> str:
+        """Extract email address from 'Name <email@domain.com>' format"""
+        match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", email_string)
+        return match.group(0) if match else email_string.lower()

@@ -1,5 +1,8 @@
+import json
 import logging
 from http import HTTPStatus
+
+import redis
 from app.bot import new
 from app.config import settings
 from app.services import EmailService
@@ -10,35 +13,58 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from telegram import Update
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 botapp = new()
+
+
+def setup_cache():
+    """Setup the cache."""
+    cache = redis.Redis.from_url(settings.redis_url)
+    logger.info(f"Reading client config from {settings.google_application_credentials}")
+    with open(settings.google_application_credentials, "r") as f:
+        success = cache.set("client_config", f.read())
+        logger.info(f"Status: {success}")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Lifespan event handler."""
-    await botapp.bot.setWebhook(settings.telegram_webhook_url)
+    if settings.google_application_credentials:
+        setup_cache()
+    else:
+        logger.warning("Google Application Credentials not set, skipping cache setup")
+
     async with botapp:
         logger.info(f"Starting {settings.app_name} v{settings.app_version}")
         logger.info(f"OpenAI API URL: {settings.openai_api_url}")
-        logger.info(f"Telegram Webhook URL: {settings.telegram_webhook_url}")
-        await botapp.start()
+        if settings.telegram_webhook_url:
+            logger.info(f"Telegram Webhook URL: {settings.telegram_webhook_url}")
+            await botapp.bot.setWebhook(
+                settings.telegram_webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                secret_token=settings.telegram_webhook_secret,
+            )
+        else:
+            logger.info("Telegram Webhook URL not set, running polling")
+            await botapp.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            await botapp.start()
         yield
         logger.info(f"Shutting down {settings.app_name}")
-        await botapp.stop()
+        if settings.telegram_webhook_url:
+            logger.info(f"Telegram Webhook URL: {settings.telegram_webhook_url}")
+        else:
+            await botapp.updater.stop()
+            await botapp.stop()
 
 
 app = FastAPI(
-    description="AI-powered test automation assistant for QA engineers",
+    description="Your Personal AI Email Agent for Gmail",
     docs_url="/docs",
     lifespan=lifespan,
     redoc_url="/redoc",
     version=settings.app_version,
     title=settings.app_name,
+    debug=settings.app_debug,
 )
 
 app.add_middleware(
@@ -76,10 +102,11 @@ async def validation_exception_handler(_, exc: RequestValidationError):
 @app.get("/")
 async def root():
     """Root endpoint."""
+    status = "running" if redis.Redis.from_url(settings.redis_url).ping() else "down"
     return {
         "name": settings.app_name,
         "version": settings.app_version,
-        "status": "running",
+        "status": status,
     }
 
 
@@ -87,23 +114,33 @@ async def root():
 async def callback(code: str, state: str):
     ids = state.split(":")
     if len(ids) != 2 or not code:
-        return HTTPException(status_code=422, detail="Invalid Code or State")
+        return HTTPException(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail="Invalid Code or State",
+        )
 
     success = EmailService(int(ids[0])).end_auth(code)
     if not success:
         return HTTPException(
-            status_code=500, detail="Failed to authenticate with Google"
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Failed to authenticate with Google",
         )
 
     await botapp.bot.send_message(
-        chat_id=int(ids[1]), text="Successfully authenticated with Google!"
+        chat_id=int(ids[1]),
+        text="Successfully authenticated with Google!",
     )
     return {"message": "Authentication successful! You can return to Telegram."}
 
 
 @app.post("/webhook")
-async def webhook(request: Request):
-    req = await request.json()
-    update = Update.de_json(req, botapp.bot)
-    await botapp.process_update(update)
+async def webhook(req: Request):
+    if (
+        req.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        != settings.telegram_webhook_secret
+    ):
+        return Response(status_code=HTTPStatus.FORBIDDEN)
+
+    data = await req.json()
+    await botapp.process_update(Update.de_json(data, botapp.bot))
     return Response(status_code=HTTPStatus.OK)

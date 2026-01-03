@@ -1,20 +1,26 @@
 import re
+from app.services.ai import AIService
+from app.services.cache import CacheService
+from app.services.email import EmailService
 from datetime import datetime
 from typing import Dict, List, Optional
-from app.services.email import EmailService
 
 
 class SessionService:
     """Manages user session data"""
 
     def __init__(self, user_id: int):
-        self.user_id = user_id
+        self.ai = AIService()
+        self.cache = CacheService(user_id)
         self.gmail = EmailService(user_id)
-        self.templates: Dict[str, dict] = {}
-        self.rules: List[dict] = []
-        self.settings = {"auto_reply": False, "whitelist": [], "blacklist": []}
-        self.audit_log: List[dict] = []
+        self.logs: List[dict] = self.cache.read("logs", [])
         self.rate_limit = {"last_action": None, "count": 0}  # Simple rate limiting
+        self.rules: List[dict] = self.cache.read("rules", [])
+        self.user_id = user_id
+        self.templates: Dict[str, dict] = self.cache.read("templates", {})
+        self.settings = self.cache.read(
+            "settings", {"auto_reply": False, "whitelist": [], "blacklist": []}
+        )
 
     def add_template(self, name: str, content: str, tone: str = "professional"):
         """Add email template"""
@@ -23,6 +29,15 @@ class SessionService:
             "tone": tone,
             "created": datetime.now().isoformat(),
         }
+        self.cache.save("templates", self.templates)
+
+    def delete_template(self, name: str) -> bool:
+        """Delete email template"""
+        if name in self.templates:
+            del self.templates[name]
+            self.cache.save("templates", self.templates)
+            return True
+        return False
 
     def add_rule(self, rule_type: str, condition: str, action: str):
         """Add automation rule"""
@@ -34,20 +49,22 @@ class SessionService:
                 "created": datetime.now().isoformat(),
             }
         )
+        self.cache.save("rules", self.rules)
 
     def log_action(self, action: str, details: dict):
         """Log user action with detailed information"""
-        self.audit_log.append(
+        self.logs.append(
             {
                 "timestamp": datetime.now().isoformat(),
                 "action": action,
                 "details": details,
-                "user_id": self.user_id,
             }
         )
-        # Keep only last 100 entries
-        if len(self.audit_log) > 100:
-            self.audit_log = self.audit_log[-100:]
+        self.cache.save("logs", self.logs)
+
+    def save_settings(self):
+        """Save user settings"""
+        self.cache.save("settings", self.settings)
 
     def check_rate_limit(self, max_actions: int = 10, window_seconds: int = 60) -> bool:
         """Check if rate limit is exceeded"""
@@ -66,19 +83,21 @@ class SessionService:
             self.rate_limit["count"] = 1
         return True
 
-    def process_rules(self, email: dict, ai_service, templates: Dict[str, dict]) -> List[dict]:
+    def process_rules(self, email: dict) -> List[dict]:
         """Process automation rules for an email"""
         applied_actions = []
-        
+
         for rule in self.rules:
             if self._rule_matches(rule, email):
-                action_result = self._apply_rule_action(rule, email, ai_service, templates)
+                action_result = self._apply_rule_action(rule, email)
                 if action_result:
-                    applied_actions.append({
-                        "rule": rule,
-                        "action": action_result,
-                        "email_id": email.get("id"),
-                    })
+                    applied_actions.append(
+                        {
+                            "rule": rule,
+                            "action": action_result,
+                            "email_id": email.get("id"),
+                        }
+                    )
                     self.log_action(
                         "rule_applied",
                         {
@@ -88,7 +107,7 @@ class SessionService:
                             "subject": email.get("subject"),
                         },
                     )
-        
+
         return applied_actions
 
     def _rule_matches(self, rule: dict, email: dict) -> bool:
@@ -97,7 +116,7 @@ class SessionService:
         email_subject = email.get("subject", "").lower()
         email_from = email.get("from", "").lower()
         email_body = email.get("body", "").lower()
-        
+
         # Simple pattern matching
         if "subject contains" in condition:
             keyword = condition.replace("subject contains", "").strip()
@@ -110,16 +129,16 @@ class SessionService:
             return keyword in email_body
         elif "from" in condition:
             # Exact match
-            email_addr = self._extract_email(email_from)
+            email_addr = self.gmail.extract_email(email_from)
             return email_addr in condition.lower()
-        
+
         return False
 
-    def _apply_rule_action(self, rule: dict, email: dict, ai_service, templates: Dict[str, dict]) -> Optional[dict]:
+    def _apply_rule_action(self, rule: dict, email: dict) -> Optional[dict]:
         """Apply a rule action to an email"""
         rule_type = rule["type"]
         action = rule["action"]
-        
+
         try:
             if rule_type == "label":
                 # Extract label name from action
@@ -127,20 +146,20 @@ class SessionService:
                 if self.gmail and self.gmail.service:
                     success = self.gmail.apply_label(email["id"], label_name)
                     return {"type": "label", "label": label_name, "success": success}
-            
+
             elif rule_type == "archive":
                 if self.gmail and self.gmail.service:
                     success = self.gmail.archive_message(email["id"])
                     return {"type": "archive", "success": success}
-            
+
             elif rule_type == "reply":
                 # Auto-reply using template
-                if self.settings["auto_reply"]:
+                if self.settings.get("auto_reply", False):
                     template_name = action.strip()
-                    template = templates.get(template_name)
-                    if template and self.gmail and self.gmail.service:
-                        reply_text = ai_service.generate_reply(email, template)
-                        sender_email = self._extract_email(email["from"])
+                    template = self.templates.get(template_name)
+                    if template:
+                        reply_text = self.ai.generate_reply(email, template)
+                        sender_email = self.gmail.extract_email(email["from"])
                         success = self.gmail.send_reply(
                             email["id"],
                             email["threadId"],
@@ -148,15 +167,14 @@ class SessionService:
                             sender_email,
                             f"Re: {email['subject']}",
                         )
-                        return {"type": "reply", "success": success, "template": template_name}
-        
+                        return {
+                            "type": "reply",
+                            "success": success,
+                            "template": template_name,
+                        }
+
         except Exception as e:
             self.log_action("rule_error", {"error": str(e), "rule": rule})
             return None
-        
-        return None
 
-    def _extract_email(self, email_string: str) -> str:
-        """Extract email address from string"""
-        match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", email_string)
-        return match.group(0) if match else email_string.lower()
+        return None
