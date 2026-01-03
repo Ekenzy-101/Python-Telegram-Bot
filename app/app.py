@@ -41,7 +41,6 @@ async def lifespan(_: FastAPI):
             logger.info(f"Telegram Webhook URL: {settings.telegram_webhook_url}")
             await botapp.bot.setWebhook(
                 settings.telegram_webhook_url,
-                allowed_updates=Update.ALL_TYPES,
                 secret_token=settings.telegram_webhook_secret,
             )
         else:
