@@ -70,6 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Toggle Auto-Reply", callback_data="toggle_auto")],
         [InlineKeyboardButton("⚙️ Settings", callback_data="settings")],
         [InlineKeyboardButton("📊 Audit Log", callback_data="audit_log")],
+        [InlineKeyboardButton("🗑️ Delete Account", callback_data="delete_account")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.callback_query:
@@ -95,6 +96,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "check_inbox":
         await check_inbox(update, context)
+
+    elif query.data == "delete_account":
+        await delete_account(update, context)
 
     elif query.data == "manage_templates":
         await show_templates(update, context)
@@ -301,6 +305,20 @@ async def check_inbox(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         text, reply_markup=reply_markup, parse_mode="Markdown"
+    )
+
+
+async def delete_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete user account"""
+    query = update.callback_query
+    session = SessionService(update.effective_user.id)
+    await query.edit_message_text(
+        "🗑️ Deleting your account data...", parse_mode="Markdown"
+    )
+
+    session.delete_all()
+    await query.edit_message_text(
+        "Deleted successfully", reply_markup=None, parse_mode="Markdown"
     )
 
 

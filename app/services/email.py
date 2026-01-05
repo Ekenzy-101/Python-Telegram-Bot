@@ -52,7 +52,7 @@ class EmailService:
             flow.fetch_token(code=code)
             self.creds = flow.credentials
             self.service = build("gmail", "v1", credentials=self.creds)
-            self.cache.save("creds", self.creds.to_json())
+            self.cache.set("creds", self.creds.to_json())
             return True
         except Exception as e:
             logger.error(f"Failed to end authentication: {e}")
@@ -92,14 +92,14 @@ class EmailService:
             return []
 
     def _create_auth_flow(self) -> Flow:
-        client_config = self.cache.read_config()
+        client_config = self.cache.get_config()
         flow = Flow.from_client_config(client_config, SCOPES)
         flow.redirect_uri = client_config["web"]["redirect_uris"][0]
         return flow
 
     def _read_user_creds(self) -> Optional[Credentials]:
         try:
-            data = self.cache.read("creds", None)
+            data = self.cache.get("creds", None)
             if not data:
                 return None
 

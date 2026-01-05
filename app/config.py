@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Kenzy Mail AI"
     app_debug: bool = True
+    app_email: str = "ekeneonyekaba@gmail.com"
+    app_github: str = "https://github.com/Ekenzy-101/Python-Telegram-Bot"
+    app_telegram: str = "kenzy_email_bot"
     app_origins: str = "*"
     app_version: str = "1.0.0"
 

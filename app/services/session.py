@@ -5,6 +5,12 @@ from app.services.email import EmailService
 from datetime import datetime
 from typing import Dict, List, Optional
 
+DEFAULT_LOGS = []
+DEFAULT_RATE_LIMIT = {"last_action": None, "count": 0}
+DEFAULT_RULES = []
+DEFAULT_TEMPLATES = {}
+DEFAULT_SETTINGS = {"auto_reply": False, "whitelist": [], "blacklist": []}
+
 
 class SessionService:
     """Manages user session data"""
@@ -13,14 +19,25 @@ class SessionService:
         self.ai = AIService()
         self.cache = CacheService(user_id)
         self.gmail = EmailService(user_id)
-        self.logs: List[dict] = self.cache.read("logs", [])
-        self.rate_limit = {"last_action": None, "count": 0}  # Simple rate limiting
-        self.rules: List[dict] = self.cache.read("rules", [])
+        self.logs: List[dict] = self.cache.get("logs", DEFAULT_LOGS)
+        self.rate_limit = DEFAULT_RATE_LIMIT
+        self.rules: List[dict] = self.cache.get("rules", DEFAULT_RULES)
         self.user_id = user_id
-        self.templates: Dict[str, dict] = self.cache.read("templates", {})
-        self.settings = self.cache.read(
-            "settings", {"auto_reply": False, "whitelist": [], "blacklist": []}
-        )
+        self.templates: Dict[str, dict] = self.cache.get("templates", DEFAULT_TEMPLATES)
+        self.settings = self.cache.get("settings", DEFAULT_SETTINGS)
+
+    def delete_all(self):
+        """Delete user session data"""
+        self.logs = DEFAULT_LOGS
+        self.rate_limit = DEFAULT_RATE_LIMIT
+        self.rules = DEFAULT_RULES
+        self.templates = DEFAULT_TEMPLATES
+        self.settings = DEFAULT_SETTINGS
+        self.cache.delete("creds")
+        self.cache.delete("logs")
+        self.cache.delete("rules")
+        self.cache.delete("settings")
+        self.cache.delete("templates")
 
     def add_template(self, name: str, content: str, tone: str = "professional"):
         """Add email template"""
@@ -29,13 +46,13 @@ class SessionService:
             "tone": tone,
             "created": datetime.now().isoformat(),
         }
-        self.cache.save("templates", self.templates)
+        self.cache.set("templates", self.templates)
 
     def delete_template(self, name: str) -> bool:
         """Delete email template"""
         if name in self.templates:
             del self.templates[name]
-            self.cache.save("templates", self.templates)
+            self.cache.set("templates", self.templates)
             return True
         return False
 
@@ -49,7 +66,7 @@ class SessionService:
                 "created": datetime.now().isoformat(),
             }
         )
-        self.cache.save("rules", self.rules)
+        self.cache.set("rules", self.rules)
 
     def log_action(self, action: str, details: dict):
         """Log user action with detailed information"""
@@ -60,11 +77,11 @@ class SessionService:
                 "details": details,
             }
         )
-        self.cache.save("logs", self.logs)
+        self.cache.set("logs", self.logs)
 
     def save_settings(self):
         """Save user settings"""
-        self.cache.save("settings", self.settings)
+        self.cache.set("settings", self.settings)
 
     def check_rate_limit(self, max_actions: int = 10, window_seconds: int = 60) -> bool:
         """Check if rate limit is exceeded"""

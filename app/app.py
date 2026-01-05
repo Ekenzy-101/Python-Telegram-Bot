@@ -1,17 +1,19 @@
-import json
 import logging
-from http import HTTPStatus
-
 import redis
 from app.bot import new
 from app.config import settings
 from app.services import EmailService
+from app.templates import HOME, PRIVACY_POLICY, TERMS_OF_SERVICE, render_page
 from contextlib import asynccontextmanager
+from datetime import datetime
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from http import HTTPStatus
 from telegram import Update
+
 
 logger = logging.getLogger(__name__)
 botapp = new()
@@ -65,7 +67,7 @@ app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
 )
-
+app.mount("/static", StaticFiles(directory="static"), name="static")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.app_origins.split(","),
@@ -98,14 +100,39 @@ async def validation_exception_handler(_, exc: RequestValidationError):
     )
 
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    """Home page"""
+    return HTMLResponse(render_page("Home", "🏠", "Kenzy Mail AI", HOME, "home"))
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    """Privacy policy page"""
+    return HTMLResponse(
+        render_page("Privacy Policy", "🔒", "Privacy Policy", PRIVACY_POLICY, "privacy")
+    )
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms():
+    """Terms of service page"""
+    return HTMLResponse(
+        render_page(
+            "Terms of Service", "📜", "Terms of Service", TERMS_OF_SERVICE, "terms"
+        )
+    )
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
     status = "running" if redis.Redis.from_url(settings.redis_url).ping() else "down"
     return {
         "name": settings.app_name,
-        "version": settings.app_version,
         "status": status,
+        "timestamp": datetime.now().isoformat(),
+        "version": settings.app_version,
     }
 
 
