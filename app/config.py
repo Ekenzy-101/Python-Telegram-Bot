@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     app_name: str = "Kenzy Mail AI"
     app_debug: bool = True
     app_email: str = "ekeneonyekaba@gmail.com"
+    app_logo: str = (
+        "https://sabruiqniqzutbaxchly.supabase.co/storage/v1/object/public/kenzymail/favicon.png"
+    )
     app_github: str = "https://github.com/Ekenzy-101/Python-Telegram-Bot"
     app_telegram: str = "kenzy_email_bot"
     app_origins: str = "*"

@@ -67,7 +67,7 @@ app = FastAPI(
     title=settings.app_name,
     debug=settings.app_debug,
 )
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.app_origins.split(","),

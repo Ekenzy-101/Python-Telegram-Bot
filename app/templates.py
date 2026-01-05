@@ -177,7 +177,7 @@ def render_page(title, header_icon, header_title, content, active_page="home"):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" href="static/favicon.png" />
+    <link rel="icon" href="{settings.app_logo}" />
     <title>{title} - {settings.app_name}</title>
     {STYLES}
 </head>
