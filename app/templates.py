@@ -177,6 +177,7 @@ def render_page(title, header_icon, header_title, content, active_page="home"):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="google-site-verification" content="3aSO44fsyzE1bd9qlezzr0s5zl0qJE3znUB1kxCDNWI" />
     <link rel="icon" href="{settings.app_logo}" />
     <title>{title} - {settings.app_name}</title>
     {STYLES}
