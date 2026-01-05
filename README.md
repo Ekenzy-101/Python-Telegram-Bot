@@ -1,6 +1,6 @@
 # 🤖 Kenzy Mail AI
 
-![Kenzy Mail AI](./static/logo.png)
+![Kenzy Mail AI](./logo.png)
 
 > Your Personal AI Email Agent for Gmail - Powered by Claude AI & Telegram
 
